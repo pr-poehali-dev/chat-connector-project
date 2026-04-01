@@ -99,3 +99,23 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Custom scrollbar for messenger */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 4px;
+}
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: #2b3a4a;
+  border-radius: 2px;
+}
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: #3a4a5a;
+}
+
+/* Prevent body scroll on messenger */
+.h-screen {
+  overflow: hidden;
+}
