@@ -1,4 +1,4 @@
-const API_URL = "/api/messenger";
+const API_URL = "https://functions.poehali.dev/2bc6b384-eeae-4c21-b043-e964bbf0173c/messenger";
 
 export async function apiCall(path: string, method = "GET", body?: unknown) {
   const url = `${API_URL}${path}`;
@@ -8,8 +8,15 @@ export async function apiCall(path: string, method = "GET", body?: unknown) {
   };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "API error");
+  const text = await res.text();
+  if (!text) throw new Error("Empty response from server");
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid JSON response: ${text.slice(0, 100)}`);
+  }
+  if (!res.ok) throw new Error((data as { error?: string }).error || "API error");
   return data;
 }
 
