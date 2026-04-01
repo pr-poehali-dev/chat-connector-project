@@ -1,4 +1,4 @@
-const API_URL = "/api/messenger";
+const API_URL = "/messenger";
 
 export async function apiCall(path: string, method = "GET", body?: unknown) {
   const url = `${API_URL}${path}`;
