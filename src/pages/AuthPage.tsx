@@ -1,45 +1,128 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
 import { saveUser } from "@/lib/store";
 import type { User } from "@/lib/store";
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: object) => void;
+          renderButton: (element: HTMLElement, config: object) => void;
+          prompt: () => void;
+        };
+      };
+    };
+  }
+}
 
 interface Props {
   onAuth: (user: User) => void;
 }
 
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+const YANDEX_CLIENT_ID = import.meta.env.VITE_YANDEX_CLIENT_ID || "";
+
 export default function AuthPage({ onAuth }: Props) {
-  const [tab, setTab] = useState<"login" | "register">("login");
-  const [username, setUsername] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<"google" | "yandex" | null>(null);
   const [error, setError] = useState("");
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      if (tab === "register") {
-        const data = await api.register(username, displayName);
-        saveUser(data.user);
-        onAuth(data.user);
-      } else {
-        const data = await api.login(username);
-        saveUser(data.user);
-        onAuth(data.user);
+  // Handle Yandex OAuth callback via URL hash
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes("access_token")) {
+      const params = new URLSearchParams(hash.slice(1));
+      const token = params.get("access_token");
+      if (token) {
+        window.history.replaceState(null, "", window.location.pathname);
+        handleYandexToken(token);
       }
+    }
+  }, []);
+
+  // Load Google Identity Services script
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      window.google?.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleGoogleResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      });
+    };
+    document.head.appendChild(script);
+    return () => {
+      document.head.removeChild(script);
+    };
+  }, []);
+
+  async function handleGoogleResponse(response: { credential: string }) {
+    setLoading("google");
+    setError("");
+    try {
+      const data = await api.oauthLogin("google", response.credential) as { user: User };
+      saveUser(data.user);
+      onAuth(data.user);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Что-то пошло не так");
+      setError(err instanceof Error ? err.message : "Ошибка входа через Google");
     } finally {
-      setLoading(false);
+      setLoading(null);
     }
   }
 
-  const isRegister = tab === "register";
-  const canSubmit = !loading && !!username && (!isRegister || !!displayName);
+  function handleGoogleClick() {
+    if (!GOOGLE_CLIENT_ID) {
+      setError("Google Client ID не настроен. Добавьте VITE_GOOGLE_CLIENT_ID.");
+      return;
+    }
+    setError("");
+    setLoading("google");
+    window.google?.accounts.id.prompt();
+    // If prompt doesn't fire callback, reset loading after timeout
+    setTimeout(() => setLoading(null), 5000);
+  }
+
+  function handleYandexClick() {
+    if (!YANDEX_CLIENT_ID) {
+      setError("Yandex Client ID не настроен. Добавьте VITE_YANDEX_CLIENT_ID.");
+      return;
+    }
+    setError("");
+    setLoading("yandex");
+    const redirectUri = window.location.origin + window.location.pathname;
+    const url =
+      `https://oauth.yandex.ru/authorize?response_type=token` +
+      `&client_id=${encodeURIComponent(YANDEX_CLIENT_ID)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&force_confirm=no`;
+    window.location.href = url;
+  }
+
+  async function handleYandexToken(token: string) {
+    setLoading("yandex");
+    setError("");
+    try {
+      const data = await api.oauthLogin("yandex", token) as { user: User };
+      saveUser(data.user);
+      onAuth(data.user);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Ошибка входа через Yandex");
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  const isLoading = loading !== null;
 
   return (
-    <div className="min-h-screen flex items-center justify-center relative overflow-hidden"
+    <div
+      className="min-h-screen flex items-center justify-center relative overflow-hidden"
       style={{
         background: "linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%)",
       }}
@@ -64,10 +147,9 @@ export default function AuthPage({ onAuth }: Props) {
         pointerEvents: "none",
       }} />
 
-      <div className="w-full max-w-md mx-4 relative z-10">
+      <div className="w-full max-w-sm mx-4 relative z-10">
         {/* Header */}
         <div className="text-center mb-10">
-          {/* Icon */}
           <div className="relative inline-flex mb-5">
             <div style={{
               width: "72px", height: "72px", borderRadius: "24px",
@@ -76,10 +158,9 @@ export default function AuthPage({ onAuth }: Props) {
               boxShadow: "0 20px 60px rgba(139,92,246,0.5)",
             }}>
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>
             </div>
-            {/* pulse ring */}
             <div style={{
               position: "absolute", inset: "-4px", borderRadius: "28px",
               border: "2px solid rgba(139,92,246,0.3)",
@@ -91,12 +172,10 @@ export default function AuthPage({ onAuth }: Props) {
             fontSize: "28px", fontWeight: "800", color: "white",
             letterSpacing: "-0.5px", marginBottom: "6px",
           }}>
-            {isRegister ? "Создать аккаунт" : "Добро пожаловать"}
+            Добро пожаловать
           </h1>
           <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "14px" }}>
-            {isRegister
-              ? "Заполните данные, чтобы начать общение"
-              : "Войдите, чтобы продолжить"}
+            Войдите через аккаунт, чтобы начать общение
           </p>
         </div>
 
@@ -109,226 +188,129 @@ export default function AuthPage({ onAuth }: Props) {
           borderRadius: "24px",
           padding: "36px",
           boxShadow: "0 32px 80px rgba(0,0,0,0.5)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "14px",
         }}>
-          {/* Tab switcher */}
-          <div style={{
-            display: "flex", background: "rgba(0,0,0,0.3)",
-            borderRadius: "14px", padding: "4px", marginBottom: "28px",
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}>
-            {(["login", "register"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => { setTab(t); setError(""); setUsername(""); setDisplayName(""); }}
-                style={{
-                  flex: 1, padding: "10px 0", borderRadius: "10px",
-                  fontSize: "13px", fontWeight: "600",
-                  transition: "all 0.25s ease",
-                  background: tab === t
-                    ? "linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)"
-                    : "transparent",
-                  color: tab === t ? "white" : "rgba(255,255,255,0.4)",
-                  border: "none", cursor: "pointer",
-                  boxShadow: tab === t ? "0 4px 20px rgba(139,92,246,0.4)" : "none",
-                }}
-              >
-                {t === "login" ? "Войти" : "Регистрация"}
-              </button>
-            ))}
-          </div>
 
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {/* Username field */}
-            <div>
-              <label style={{
-                display: "block", fontSize: "12px", fontWeight: "600",
-                color: "rgba(255,255,255,0.5)", marginBottom: "8px",
-                textTransform: "uppercase", letterSpacing: "0.8px",
-              }}>
-                Имя пользователя
-              </label>
-              <div style={{ position: "relative" }}>
-                <span style={{
-                  position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)",
-                  color: "rgba(255,255,255,0.3)", pointerEvents: "none",
-                }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-                    <circle cx="12" cy="7" r="4"/>
-                  </svg>
-                </span>
-                <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s/g, "_"))}
-                  placeholder="ivan_ivanov"
-                  autoComplete="username"
-                  style={{
-                    width: "100%", boxSizing: "border-box",
-                    paddingLeft: "42px", paddingRight: "16px",
-                    paddingTop: "13px", paddingBottom: "13px",
-                    background: "rgba(255,255,255,0.07)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: "12px", color: "white", fontSize: "14px",
-                    outline: "none", transition: "border-color 0.2s, background 0.2s",
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = "rgba(139,92,246,0.7)";
-                    e.currentTarget.style.background = "rgba(255,255,255,0.1)";
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
-                    e.currentTarget.style.background = "rgba(255,255,255,0.07)";
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Display name field (register only) */}
-            <div style={{
-              overflow: "hidden",
-              maxHeight: isRegister ? "120px" : "0",
-              opacity: isRegister ? 1 : 0,
-              transition: "max-height 0.35s ease, opacity 0.25s ease",
-            }}>
-              <label style={{
-                display: "block", fontSize: "12px", fontWeight: "600",
-                color: "rgba(255,255,255,0.5)", marginBottom: "8px",
-                textTransform: "uppercase", letterSpacing: "0.8px",
-              }}>
-                Отображаемое имя
-              </label>
-              <div style={{ position: "relative" }}>
-                <span style={{
-                  position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)",
-                  color: "rgba(255,255,255,0.3)", pointerEvents: "none",
-                }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-                  </svg>
-                </span>
-                <input
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Иван Иванов"
-                  tabIndex={isRegister ? 0 : -1}
-                  style={{
-                    width: "100%", boxSizing: "border-box",
-                    paddingLeft: "42px", paddingRight: "16px",
-                    paddingTop: "13px", paddingBottom: "13px",
-                    background: "rgba(255,255,255,0.07)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: "12px", color: "white", fontSize: "14px",
-                    outline: "none", transition: "border-color 0.2s, background 0.2s",
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = "rgba(139,92,246,0.7)";
-                    e.currentTarget.style.background = "rgba(255,255,255,0.1)";
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
-                    e.currentTarget.style.background = "rgba(255,255,255,0.07)";
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Error */}
-            {error && (
+          {/* Google button */}
+          <button
+            onClick={handleGoogleClick}
+            disabled={isLoading}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: "12px",
+              width: "100%", padding: "14px 20px",
+              background: loading === "google" ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.95)",
+              border: "1px solid rgba(255,255,255,0.2)",
+              borderRadius: "14px", cursor: isLoading ? "not-allowed" : "pointer",
+              fontSize: "15px", fontWeight: "600",
+              color: "#1f1f1f",
+              transition: "all 0.2s ease",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+              opacity: isLoading && loading !== "google" ? 0.5 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!isLoading) e.currentTarget.style.background = "white";
+            }}
+            onMouseLeave={(e) => {
+              if (!isLoading) e.currentTarget.style.background = "rgba(255,255,255,0.95)";
+            }}
+          >
+            {loading === "google" ? (
               <div style={{
-                display: "flex", alignItems: "center", gap: "8px",
-                padding: "12px 14px", borderRadius: "12px",
-                background: "rgba(239,68,68,0.15)",
-                border: "1px solid rgba(239,68,68,0.3)",
-                color: "#fca5a5", fontSize: "13px",
-              }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
-                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-                {error}
-              </div>
+                width: "20px", height: "20px",
+                border: "2px solid #ccc",
+                borderTopColor: "#4285F4",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+              }} />
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+              </svg>
             )}
+            <span>{loading === "google" ? "Входим..." : "Войти через Google"}</span>
+          </button>
 
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              style={{
-                width: "100%", padding: "14px", borderRadius: "14px",
-                fontSize: "15px", fontWeight: "700", color: "white",
-                border: "none", cursor: canSubmit ? "pointer" : "not-allowed",
-                background: canSubmit
-                  ? "linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)"
-                  : "rgba(255,255,255,0.08)",
-                boxShadow: canSubmit ? "0 8px 30px rgba(139,92,246,0.45)" : "none",
-                transition: "all 0.25s ease",
-                marginTop: "4px",
-                transform: "translateY(0)",
-                opacity: canSubmit ? 1 : 0.5,
-              }}
-              onMouseEnter={(e) => {
-                if (canSubmit) {
-                  e.currentTarget.style.transform = "translateY(-1px)";
-                  e.currentTarget.style.boxShadow = "0 12px 40px rgba(139,92,246,0.6)";
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "translateY(0)";
-                e.currentTarget.style.boxShadow = canSubmit ? "0 8px 30px rgba(139,92,246,0.45)" : "none";
-              }}
-            >
-              {loading ? (
-                <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                  <span style={{
-                    width: "16px", height: "16px", border: "2px solid rgba(255,255,255,0.3)",
-                    borderTopColor: "white", borderRadius: "50%",
-                    display: "inline-block",
-                    animation: "spin 0.7s linear infinite",
-                  }} />
-                  Загрузка...
-                </span>
-              ) : (
-                isRegister ? "Создать аккаунт" : "Войти"
-              )}
-            </button>
-          </form>
+          {/* Yandex button */}
+          <button
+            onClick={handleYandexClick}
+            disabled={isLoading}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: "12px",
+              width: "100%", padding: "14px 20px",
+              background: loading === "yandex" ? "rgba(252,75,5,0.4)" : "rgba(252,75,5,0.85)",
+              border: "1px solid rgba(252,75,5,0.3)",
+              borderRadius: "14px", cursor: isLoading ? "not-allowed" : "pointer",
+              fontSize: "15px", fontWeight: "600",
+              color: "white",
+              transition: "all 0.2s ease",
+              boxShadow: "0 4px 20px rgba(252,75,5,0.3)",
+              opacity: isLoading && loading !== "yandex" ? 0.5 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!isLoading) e.currentTarget.style.background = "rgba(252,75,5,1)";
+            }}
+            onMouseLeave={(e) => {
+              if (!isLoading) e.currentTarget.style.background = "rgba(252,75,5,0.85)";
+            }}
+          >
+            {loading === "yandex" ? (
+              <div style={{
+                width: "20px", height: "20px",
+                border: "2px solid rgba(255,255,255,0.4)",
+                borderTopColor: "white",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+              }} />
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="12" fill="white" />
+                <text x="12" y="17" textAnchor="middle" fontSize="14" fontWeight="bold" fill="#FC4B05" fontFamily="Arial">Я</text>
+              </svg>
+            )}
+            <span>{loading === "yandex" ? "Переход..." : "Войти через Yandex"}</span>
+          </button>
 
-          {/* Switch hint */}
+          {/* Error */}
+          {error && (
+            <div style={{
+              padding: "12px 16px",
+              background: "rgba(239,68,68,0.15)",
+              border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: "12px",
+              color: "#fca5a5",
+              fontSize: "13px",
+              textAlign: "center",
+              lineHeight: "1.5",
+            }}>
+              {error}
+            </div>
+          )}
+
           <p style={{
-            textAlign: "center", fontSize: "13px",
-            color: "rgba(255,255,255,0.35)", marginTop: "20px",
+            color: "rgba(255,255,255,0.25)",
+            fontSize: "12px",
+            textAlign: "center",
+            marginTop: "4px",
+            lineHeight: "1.6",
           }}>
-            {isRegister ? "Уже есть аккаунт? " : "Нет аккаунта? "}
-            <button
-              onClick={() => { setTab(isRegister ? "login" : "register"); setError(""); setUsername(""); setDisplayName(""); }}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: "#a78bfa", fontWeight: "600", fontSize: "13px",
-                padding: 0,
-              }}
-            >
-              {isRegister ? "Войти" : "Зарегистрироваться"}
-            </button>
+            При первом входе аккаунт создаётся автоматически
           </p>
         </div>
-
-        {/* Footer */}
-        <p style={{
-          textAlign: "center", fontSize: "12px",
-          color: "rgba(255,255,255,0.2)", marginTop: "24px",
-        }}>
-          Безопасное общение в реальном времени
-        </p>
       </div>
 
       <style>{`
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
         @keyframes pulse-ring {
           0%, 100% { opacity: 0.3; transform: scale(1); }
           50% { opacity: 0.7; transform: scale(1.05); }
         }
-        input::placeholder { color: rgba(255,255,255,0.25); }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
       `}</style>
     </div>
   );

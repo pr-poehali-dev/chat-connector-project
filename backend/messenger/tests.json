@@ -1,15 +1,15 @@
 [
   {
-    "name": "Register user",
-    "method": "POST",
-    "path": "/messenger/register",
-    "body": { "username": "testuser1", "display_name": "Test User" },
-    "expectedStatus": 200
-  },
-  {
     "name": "Get users",
     "method": "GET",
     "path": "/messenger/users?current_user_id=00000000-0000-0000-0000-000000000000",
     "expectedStatus": 200
+  },
+  {
+    "name": "OAuth login missing provider",
+    "method": "POST",
+    "path": "/messenger/oauth_login",
+    "body": {},
+    "expectedStatus": 400
   }
 ]

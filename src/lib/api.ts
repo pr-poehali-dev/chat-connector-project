@@ -37,6 +37,9 @@ export async function apiCall(path: string, method = "GET", body?: unknown) {
 }
 
 export const api = {
+  oauthLogin: (provider: string, token: string) =>
+    apiCall("/oauth_login", "POST", { provider, token }),
+
   register: (username: string, display_name: string) =>
     apiCall("/register", "POST", { username, display_name }),
 
