@@ -4,15 +4,9 @@ import re
 import random
 from urllib.parse import urlparse, parse_qs
 import psycopg
-import requests as http_requests
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SCHEMA = os.environ.get("MAIN_DB_SCHEMA", "t_p79267135_chat_connector_proje")
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-YANDEX_CLIENT_ID = os.environ.get("YANDEX_CLIENT_ID", "")
-YANDEX_CLIENT_SECRET = os.environ.get("YANDEX_CLIENT_SECRET", "")
 
 COLORS = ["#2AABEE", "#E91E63", "#9C27B0", "#FF5722", "#4CAF50", "#FF9800", "#00BCD4", "#3F51B5"]
 
@@ -119,89 +113,6 @@ async def handler(request):
                     row = cur.fetchone()
                     if not row:
                         return err("User not found", 404)
-                    cols = [d[0] for d in cur.description]
-                    conn.commit()
-                    return json_response({"user": dict(zip(cols, row))})
-
-                # POST /messenger/oauth_login
-                if action == "oauth_login" and method == "POST":
-                    provider = body.get("provider", "")
-                    token = body.get("token", "")
-                    if not provider or not token:
-                        return err("provider and token required")
-
-                    oauth_id = None
-                    display_name = None
-                    email = None
-
-                    if provider == "google":
-                        try:
-                            idinfo = id_token.verify_oauth2_token(
-                                token, google_requests.Request(), GOOGLE_CLIENT_ID
-                            )
-                            oauth_id = "google_" + idinfo["sub"]
-                            display_name = idinfo.get("name", idinfo.get("email", "User"))
-                            email = idinfo.get("email", "")
-                        except Exception as e:
-                            return err(f"Invalid Google token: {str(e)}", 401)
-
-                    elif provider == "yandex":
-                        try:
-                            resp = http_requests.get(
-                                "https://login.yandex.ru/info",
-                                headers={"Authorization": f"OAuth {token}"},
-                                timeout=10
-                            )
-                            if resp.status_code != 200:
-                                return err("Invalid Yandex token", 401)
-                            yinfo = resp.json()
-                            oauth_id = "yandex_" + yinfo["id"]
-                            display_name = yinfo.get("real_name") or yinfo.get("display_name") or yinfo.get("login", "User")
-                            email = yinfo.get("default_email", "")
-                        except Exception as e:
-                            return err(f"Yandex auth error: {str(e)}", 401)
-                    else:
-                        return err("Unknown provider")
-
-                    # Try to find existing user by oauth_id
-                    cur.execute(
-                        f'SELECT id, username, display_name, avatar_color, bio, is_online FROM {SCHEMA}.users WHERE oauth_id=%s',
-                        (oauth_id,)
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        cols = [d[0] for d in cur.description]
-                        user = dict(zip(cols, row))
-                        # Update online status
-                        cur.execute(
-                            f'UPDATE {SCHEMA}.users SET is_online=true, last_seen=NOW() WHERE id=%s',
-                            (user["id"],)
-                        )
-                        conn.commit()
-                        user["is_online"] = True
-                        return json_response({"user": user})
-
-                    # Create new user
-                    color = random.choice(COLORS)
-                    # Generate unique username from display_name or email
-                    base = re.sub(r'[^a-z0-9_]', '_', (email.split("@")[0] if email else display_name).lower())[:20]
-                    base = re.sub(r'_+', '_', base).strip('_') or "user"
-                    if len(base) < 3:
-                        base = base + "_user"
-                    username = base
-                    suffix = 1
-                    while True:
-                        cur.execute(f'SELECT id FROM {SCHEMA}.users WHERE username=%s', (username,))
-                        if not cur.fetchone():
-                            break
-                        username = f"{base}_{suffix}"
-                        suffix += 1
-
-                    cur.execute(
-                        f'INSERT INTO {SCHEMA}.users(username, display_name, avatar_color, oauth_id, oauth_provider) VALUES(%s,%s,%s,%s,%s) RETURNING id, username, display_name, avatar_color, bio, is_online',
-                        (username, display_name, color, oauth_id, provider)
-                    )
-                    row = cur.fetchone()
                     cols = [d[0] for d in cur.description]
                     conn.commit()
                     return json_response({"user": dict(zip(cols, row))})

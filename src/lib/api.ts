@@ -1,21 +1,5 @@
 const API_URL = "https://functions.poehali.dev/2bc6b384-eeae-4c21-b043-e964bbf0173c/messenger";
 
-async function fetchWithRetry(url: string, opts: RequestInit, retries = 3, delayMs = 1000): Promise<Response> {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      const res = await fetch(url, opts);
-      return res;
-    } catch (err) {
-      if (attempt < retries - 1) {
-        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
-      } else {
-        throw err;
-      }
-    }
-  }
-  throw new Error("All retries failed");
-}
-
 export async function apiCall(path: string, method = "GET", body?: unknown) {
   const url = `${API_URL}${path}`;
   const opts: RequestInit = {
@@ -23,7 +7,7 @@ export async function apiCall(path: string, method = "GET", body?: unknown) {
     headers: { "Content-Type": "application/json" },
   };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetchWithRetry(url, opts);
+  const res = await fetch(url, opts);
   const text = await res.text();
   if (!text) throw new Error("Empty response from server");
   let data: unknown;
@@ -37,9 +21,6 @@ export async function apiCall(path: string, method = "GET", body?: unknown) {
 }
 
 export const api = {
-  oauthLogin: (provider: string, token: string) =>
-    apiCall("/oauth_login", "POST", { provider, token }),
-
   register: (username: string, display_name: string) =>
     apiCall("/register", "POST", { username, display_name }),
 
